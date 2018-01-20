@@ -13,7 +13,7 @@ import akka.actor.typed.scaladsl.adapter._
 import akka.actor.typed.ActorRef
 import akka.actor.typed.PostStop
 import akka.actor.typed.Props
-import akka.actor.typed.TypedAkkaSpec
+import akka.actor.typed.TestException
 import akka.actor.typed.TypedAkkaSpecWithShutdown
 import akka.testkit.EventFilter
 import akka.testkit.typed.TestKit
@@ -24,6 +24,7 @@ object MessageAdapterSpec {
   val config = ConfigFactory.parseString(
     """
       akka.loggers = ["akka.testkit.TestEventListener"]
+      akka.log-dead-letters = off
       ping-pong-dispatcher {
         executor = thread-pool-executor
         type = PinnedDispatcher
@@ -36,6 +37,8 @@ object MessageAdapterSpec {
 }
 
 class MessageAdapterSpec extends TestKit(MessageAdapterSpec.config) with TypedAkkaSpecWithShutdown {
+
+  implicit val untyped = system.toUntyped // FIXME no typed event filter yet
 
   "Message adapters" must {
 
@@ -127,7 +130,7 @@ class MessageAdapterSpec extends TestKit(MessageAdapterSpec.config) with TypedAk
       probe.expectMsg(Wrapped("2", Pong2("hello-2")))
     }
 
-    "not break if wrong response type" in {
+    "not break if wrong/unknown response type" in {
       trait Ping
       case class Ping1(sender: ActorRef[Pong1]) extends Ping
       case class Ping2(sender: ActorRef[Pong2]) extends Ping
@@ -167,11 +170,64 @@ class MessageAdapterSpec extends TestKit(MessageAdapterSpec.config) with TypedAk
         }
       }
 
-      spawn(snitch)
+      EventFilter.warning(start = "unhandled message", occurrences = 1).intercept {
+        spawn(snitch)
+      }
 
       probe.expectMsg(Wrapped("1", Pong1("hello-1")))
       // hello-2 discarded because it was wrong type
       probe.expectMsg(Wrapped("1", Pong1("hello-1")))
+    }
+
+    "stop when exception from adapter" in {
+      case class Ping(sender: ActorRef[Pong])
+      case class Pong(greeting: String)
+      case class Wrapped(count: Int, response: Pong)
+
+      val pingPong = spawn(Behaviors.immutable[Ping] { (_, ping) ⇒
+        ping.sender ! Pong("hello")
+        Behaviors.same
+      })
+
+      val probe = TestProbe[Any]()
+
+      val snitch = Behaviors.deferred[Wrapped] { (ctx) ⇒
+
+        var count = 0
+        val replyTo = ctx.messageAdapter[Pong] { pong ⇒
+          count += 1
+          if (count == 3) throw new TestException("boom")
+          else Wrapped(count, pong)
+        }
+        (1 to 4).foreach { _ ⇒
+          pingPong ! Ping(replyTo)
+        }
+
+        Behaviors.immutable[Wrapped] {
+          case (_, wrapped) ⇒
+            probe.ref ! wrapped
+            Behaviors.same
+        }.onSignal {
+          case (_, PostStop) ⇒
+            probe.ref ! "stopped"
+            Behaviors.same
+        }
+      }
+
+      EventFilter.warning(pattern = ".*received dead letter.*", occurrences = 1).intercept {
+        EventFilter[TestException](occurrences = 1).intercept {
+          spawn(snitch)
+        }
+      }
+
+      probe.expectMsg(Wrapped(1, Pong("hello")))
+      probe.expectMsg(Wrapped(2, Pong("hello")))
+      // exception was thrown for  3
+
+      // FIXME One thing to be aware of is that the supervision strategy of the Behavior is not
+      // used for exceptions from adapters. Should we instead catch, log, unhandled, and resume?
+      // It's kind of "before" the message arrives.
+      probe.expectMsg("stopped")
     }
 
   }
