@@ -161,18 +161,18 @@ trait ActorContext[T] {
    * That also means that a registered adapter will replace an existing adapter for
    * the same message class.
    *
-   * A message adapter will be used the message class matches the given class or
+   * A message adapter will be used if the message class matches the given class or
    * is a subclass thereof. The registered adapters are tried in reverse order of
    * their registration order, i.e. the last registered first.
    *
    * A message adapter (and the returned `ActorRef`) has the same lifecycle as
    * this actor. It's recommended to register the adapters in a top level
-   * `Behaviors.deferred` but it's possible to register them later also if needed.
-   * Message adapters don't have to stopped since they consume no resources other
-   * than an entry in an internal `Map` and the number of adapters are bounded
-   * since it's only possible to have one per message class.
+   * `Behaviors.deferred` or constructor of `MutableBehavior` but it's possible to
+   * register them later also if needed. Message adapters don't have to stopped since
+   * they consume no resources other than an entry in an internal `Map` and the number
+   * of adapters are bounded since it's only possible to have one per message class.
    * *
-   * The function is running this actor and can safely access state of it.
+   * The function is running in this actor and can safely access state of it.
    */
   def messageAdapter[U](messageClass: Class[U], f: JFunction[U, T]): ActorRef[U]
 
