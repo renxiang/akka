@@ -71,9 +71,9 @@ public class MutableIntroTest {
         this.message = message;
       }
     }
-    public static final class NotifyClient implements SessionCommand {
-      public final MessagePosted message;
-      public NotifyClient(MessagePosted message) {
+    private static final class NotifyClient implements SessionCommand {
+      final MessagePosted message;
+      NotifyClient(MessagePosted message) {
         this.message = message;
       }
     }
